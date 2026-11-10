@@ -54,7 +54,7 @@ echo "  -> GRUB now permanently displays a 5-second menu with large readable tex
 # --- STEP 2: Protect AMD GPU in PCIe ASPM / Powertop Tuning ---
 echo "[2/4] Updating PCIe ASPM service to protect AMD GPU from crashing..."
 
-SRC_ASPM="/home/aaronkillen/Development/t2-aspm-tune/pcie-aspm-tune.sh"
+SRC_ASPM="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pmfix/pcie-aspm-tune.sh"
 DST_ASPM="/usr/local/sbin/pcie-aspm-tune.sh"
 
 if [[ -f "$SRC_ASPM" ]]; then

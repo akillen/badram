@@ -30,9 +30,10 @@ ACTION=="add|change", SUBSYSTEM=="usb", DRIVERS=="t2bce_vhci", ATTR{power/autosu
 ACTION=="add|change", SUBSYSTEM=="pci", ATTR{vendor}=="0x106b", ATTR{power/control}="on"
 EOF
 
-if [[ -f "/home/aaronkillen/Development/t2-aspm-tune/pcie-aspm-tune.sh" ]]; then
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/pcie-aspm-tune.sh" ]]; then
     echo "[+] 3. Synchronizing /usr/local/sbin/pcie-aspm-tune.sh..."
-    install -m 0755 /home/aaronkillen/Development/t2-aspm-tune/pcie-aspm-tune.sh /usr/local/sbin/pcie-aspm-tune.sh
+    install -m 0755 "${SCRIPT_DIR}/pcie-aspm-tune.sh" /usr/local/sbin/pcie-aspm-tune.sh
 fi
 
 echo "[+] 4. Reloading udev rules..."
