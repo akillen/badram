@@ -1,0 +1,10 @@
+#!/bin/bash
+LIMIT_FILE=$(find -L /sys/class/power_supply \
+    \( -name charge_control_end_threshold \
+       -o -name battery_charge_limit \) \
+    -print -quit)
+if [ -n "$LIMIT_FILE" ]; then
+    echo 80 #| sudo tee "$LIMIT_FILE"
+else
+    echo "No supported charge-limit attribute found"
+fi

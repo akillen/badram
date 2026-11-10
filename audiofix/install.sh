@@ -1,0 +1,130 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# (C) 2026 Linux T2 Kernel Team
+#
+# Standalone install: run from the source directory. Installs to the same
+# paths as the deb package; see INSTALL_PATHS.md.
+
+if [ ! -d "configs" ]; then
+    echo "Error: Run this script from the source directory (must contain configs/)."
+    exit 1
+fi
+CONFIG_DIR="configs"
+
+# Model dict: "model_id dir_name" pairs (POSIX sh compatible)
+MODEL_DICT="
+MacBookAir8,1  8_1
+MacBookAir8,2  8_2
+MacBookAir9,1  9_1
+MacBookPro15,1 15_1
+MacBookPro15,2 15_2
+MacBookPro15,4 15_4
+MacBookPro16,1 16_1
+MacBookPro16,2 16_2
+MacBookPro16,3 16_3
+MacBookPro16,4 16_4
+"
+
+get_model_dir() {
+    local model="$1"
+    set -- $MODEL_DICT
+    while [ $# -ge 2 ]; do
+        if [ "$1" = "$model" ]; then
+            echo "$2"
+            return 0
+        fi
+        shift 2
+    done
+    return 1
+}
+
+# List of supported models (for error messages), derived from dict keys
+SUPPORTED_MODELS=$(set -- $MODEL_DICT; while [ $# -ge 2 ]; do echo "$1"; shift 2; done)
+
+# Detect computer model
+MODEL=$(cat /sys/class/dmi/id/product_name 2>/dev/null)
+
+if [ -z "$MODEL" ]; then
+    echo "Error: Could not detect computer model"
+    exit 1
+fi
+
+# Get directory name from mapping
+MODEL_DIR=$(get_model_dir "$MODEL")
+if [ -z "$MODEL_DIR" ]; then
+    echo "Error: Model '${MODEL}' is not supported"
+    echo "Supported models:"
+    for model_name in $SUPPORTED_MODELS; do
+        echo "  - ${model_name}"
+    done
+    exit 1
+fi
+
+if [ ! -d "${CONFIG_DIR}/${MODEL_DIR}" ]; then
+    echo "Error: Configuration not found for model: ${MODEL}"
+    echo "Available models:"
+    ls -d ${CONFIG_DIR}/*/ 2>/dev/null | sed 's|.*/||' || echo "  (none found)"
+    exit 1
+fi
+
+echo "Detected model: ${MODEL} (using directory: ${MODEL_DIR})"
+echo "Installing DSP config for ${MODEL}"
+
+# Rename the t2bce_audio ALSA card id to t2-<model_dir> (e.g. t2-16_1).
+# Full DMI names like t2-MacBookPro16,1 exceed ALSA's 15-character id and truncate.
+UDEV_SRC="${CONFIG_DIR}/99-t2-audio-rename.rules"
+if [ -f "$UDEV_SRC" ]; then
+    echo "Installing udev rule to /etc/udev/rules.d/99-t2-audio-rename.rules (id=t2-${MODEL_DIR})"
+    sed "s/@MODEL_DIR@/${MODEL_DIR}/g" "$UDEV_SRC" | sudo tee /etc/udev/rules.d/99-t2-audio-rename.rules >/dev/null
+    sudo chmod 0644 /etc/udev/rules.d/99-t2-audio-rename.rules
+    sudo udevadm control --reload-rules
+    sudo udevadm trigger --subsystem-match=sound --action=change
+else
+    echo "Warning: ${UDEV_SRC} not found, skipping ALSA card rename"
+fi
+
+# Install WirePlumber config (alsa.id rules + per-model DSP graphs)
+echo "Installing WirePlumber config to /etc/wireplumber/wireplumber.conf.d"
+sudo install -d -o root -g root -m 0755 /etc/wireplumber/wireplumber.conf.d
+sudo install -o root -g root -m 0644 "${CONFIG_DIR}/wireplumber.conf" \
+    /etc/wireplumber/wireplumber.conf.d/50-t2-audio.conf
+
+# Install FIRs, DSP graphs, wav files, and json files to /usr/share/t2linux-audio/${MODEL_DIR}
+echo "Installing DSP graphs, wav files, and json files to /usr/share/t2linux-audio/${MODEL_DIR}"
+sudo install -d -o root -g root -m 0755 /usr/share/t2linux-audio/${MODEL_DIR}
+for ext in wav json; do
+    for file in ${CONFIG_DIR}/${MODEL_DIR}/*.$ext; do
+        [ -e "$file" ] || continue
+        sudo install -o root -g root -m 0644 "$file" /usr/share/t2linux-audio/${MODEL_DIR}/
+    done
+done
+
+# Clean up old PipeWire configurations (now using WirePlumber for both speakers and mic)
+OLD_MODEL_ID=$(echo "$MODEL_DIR" | tr -d '_')
+if [ -f "/etc/pipewire/pipewire.conf.d/t2_${OLD_MODEL_ID}_speakers.conf" ]; then
+    echo "Removing old PipeWire speaker config (now using WirePlumber)"
+    sudo rm -f "/etc/pipewire/pipewire.conf.d/t2_${OLD_MODEL_ID}_speakers.conf"
+fi
+
+if [ -f "/etc/pipewire/pipewire.conf.d/t2_${OLD_MODEL_ID}_mic.conf" ]; then
+    echo "Removing old PipeWire mic config (now using WirePlumber)"
+    sudo rm -f "/etc/pipewire/pipewire.conf.d/t2_${OLD_MODEL_ID}_mic.conf"
+fi
+
+echo "Restarting WirePlumber and PipeWire for current user or reboot to take effect...."
+echo "run: systemctl --user restart wireplumber pipewire pipewire-pulse"
+echo ""
+echo "Installation complete!"
+echo "The raw Apple Audio Device nodes are hidden; only DSP outputs are visible."
+echo "Use the DSP nodes for normal playback and recording:"
+
+# Check if mic config exists for this model
+if ls ${CONFIG_DIR}/${MODEL_DIR}/mic.json 1> /dev/null 2>&1; then
+    echo "  - DSP Speakers"
+    echo "  - DSP Mic"
+else
+    echo "  - DSP Speakers"
+fi
+
+echo ""
+echo "Note: You may need to log out and log back in for changes to fully take effect."
